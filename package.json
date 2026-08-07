@@ -1,0 +1,20 @@
+{
+  "name": "polydub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Translate and dub web pages, videos, and podcasts live using Google AI",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && node scripts/watch.mjs",
+    "build": "node scripts/build-extension.mjs && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.3",
+    "vitest": "^2.1.8"
+  }
+}

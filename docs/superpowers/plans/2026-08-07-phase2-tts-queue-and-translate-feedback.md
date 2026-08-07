@@ -932,6 +932,54 @@ git commit -m "feat: translation progress feedback with on-page toast and popup 
 
 ---
 
+### Task 6b: Fix — revert applied batches when a translation run fails mid-flight
+
+> Added 2026-08-07 after Task 6 review: mid-flight failure previously left a
+> partially-translated page with `state` unset, so `polydub-revert-page` returned
+> `{count: 0}` and partial texts were cached as new originals (pre-translation
+> text unrecoverable). Fix: record applied refs into `state` at apply time, and
+> on failure restore them before rethrowing.
+
+**Files:**
+- Modify: `src/content/content.ts`
+
+- [ ] **Step 1: Record applied refs into `state` at apply time**
+
+In `translatePage` (src/content/content.ts):
+1. Delete the `const newOriginals: TextNodeRef[] = [];` line.
+2. In `applyBatch`, replace `newOriginals.push(...batchRefs);` with:
+
+```ts
+    state = { originals: [...(state?.originals ?? []), ...batchRefs] };
+```
+
+3. Delete the final assignment after the try/finally (`state = { originals: [...(state?.originals ?? []), ...newOriginals] };`), keeping `return { count: appliedCount };`.
+
+- [ ] **Step 2: Revert applied batches on failure**
+
+Change the `try { ... } finally { ... }` around `translateItems` (same function) to `try { ... } catch { ... } finally { ... }` with, in the catch (before `throw err;`):
+
+```ts
+      if (state?.originals.length) {
+        restoreText(state.originals);
+        state = null;
+      }
+```
+
+The rethrow keeps the existing error contract (`sendResponse({ ok: false, error })` from the message handler's catch). `restoreText` is already imported.
+
+- [ ] **Step 3: Verify**
+
+Run: `npm run typecheck && npm test && npm run build`
+Expected: TYPECHECK OK; all tests pass (46); build succeeds.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/content/content.ts
+git commit -m "fix: revert applied translations when a page translation fails mid-flight"
+```
+
 ### Task 7: Real test, PRD update, phase2-checkpoint
 
 **Files:**

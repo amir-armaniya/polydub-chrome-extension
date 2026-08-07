@@ -22,6 +22,8 @@ const footerNote = $<HTMLSpanElement>('footer-note');
 const statusDot = $<HTMLSpanElement>('status-dot');
 const translatePageBtn = $<HTMLButtonElement>('translate-page');
 const readSelectionBtn = $<HTMLButtonElement>('read-selection');
+const audioPlayBtn = $<HTMLButtonElement>('audio-play');
+const audioStopBtn = $<HTMLButtonElement>('audio-stop');
 const dubToggleBtn = $<HTMLButtonElement>('dub-toggle');
 const translateStatus = $<HTMLParagraphElement>('translate-status');
 const readStatus = $<HTMLParagraphElement>('read-status');
@@ -145,8 +147,85 @@ translatePageBtn.addEventListener('click', async () => {
   }
 });
 
+interface AudioState {
+  state: 'idle' | 'playing' | 'paused';
+  position?: number;
+  duration?: number;
+  error?: string;
+}
+
+let audioState: AudioState = { state: 'idle' };
+let playbackActive = false;
+
+function applyAudioState(state: AudioState): void {
+  audioState = state;
+  const playing = state.state === 'playing';
+  const active = state.state !== 'idle';
+  audioPlayBtn.disabled = !active && !playbackActive;
+  audioPlayBtn.textContent = playing ? 'Pause' : active ? 'Resume' : 'Play / Pause';
+  audioStopBtn.disabled = !active && !playbackActive;
+  if (state.error) {
+    setStatus(readStatus, state.error, 'error');
+    playbackActive = false;
+    audioPlayBtn.disabled = true;
+    audioStopBtn.disabled = true;
+  } else if (state.state === 'playing') {
+    setStatus(readStatus, 'Playing…', 'info');
+  } else if (state.state === 'paused') {
+    setStatus(readStatus, 'Paused.', 'info');
+  } else if (playbackActive) {
+    playbackActive = false;
+    setStatus(readStatus, 'Done.', 'ok');
+  }
+}
+
+chrome.runtime.onMessage.addListener((message: unknown) => {
+  if (!message || typeof message !== 'object') return;
+  const msg = message as { type?: string; data?: AudioState };
+  if (msg.type === 'polydub-audio-state-update' && msg.data) applyAudioState(msg.data);
+});
+
+async function readSelection(): Promise<void> {
+  if (!(await hasApiKey())) {
+    setStatus(readStatus, 'Add your API key in Settings first.', 'error');
+    switchTab('settings');
+    return;
+  }
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) throw new Error('No active tab');
+    if (!(await ensureContent(tab.id))) throw new Error('Cannot reach page (try a normal web page)');
+
+    const sel = (await chrome.tabs.sendMessage(tab.id, {
+      type: 'polydub-get-selection',
+    })) as { ok: boolean; data?: { text?: string }; error?: string };
+    const text = (sel?.data?.text ?? '').trim();
+    if (!text) throw new Error('Select some text on the page first.');
+
+    setStatus(readStatus, 'Reading…');
+    const res = (await chrome.runtime.sendMessage({ type: 'polydub-read-aloud', text })) as {
+      ok: boolean;
+      error?: string;
+    };
+    if (!res?.ok) throw new Error(res?.error ?? 'Read failed');
+    playbackActive = true;
+    applyAudioState({ state: 'playing' });
+  } catch (err) {
+    setStatus(readStatus, err instanceof Error ? err.message : 'Read failed.', 'error');
+  }
+}
+
 readSelectionBtn.addEventListener('click', () => {
-  setStatus(readStatus, 'Reading will be available in Phase 2.');
+  void readSelection();
+});
+
+audioPlayBtn.addEventListener('click', () => {
+  const command = audioState.state === 'playing' ? 'pause' : 'play';
+  void chrome.runtime.sendMessage({ type: 'polydub-audio-command', command });
+});
+
+audioStopBtn.addEventListener('click', () => {
+  void chrome.runtime.sendMessage({ type: 'polydub-audio-command', command: 'stop' });
 });
 
 dubToggleBtn.addEventListener('click', () => {
@@ -155,6 +234,13 @@ dubToggleBtn.addEventListener('click', () => {
 
 (async () => {
   await refreshKeyState();
+  void chrome.runtime.sendMessage({ type: 'polydub-audio-state-get' }).then((res: unknown) => {
+    const r = res as { ok?: boolean; data?: AudioState } | null;
+    if (r?.ok && r.data) {
+      playbackActive = r.data.state !== 'idle';
+      applyAudioState(r.data);
+    }
+  }).catch(() => {});
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;

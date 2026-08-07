@@ -90,8 +90,13 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     return true;
   }
 
-  if (msg.type === 'polydub-read-selection') {
-    sendResponse({ ok: false, error: 'Read aloud will be available in Phase 2.' });
+  if (msg.type === 'polydub-get-selection') {
+    sendResponse({ ok: true, data: { text: window.getSelection()?.toString() ?? '' } });
+    return true;
+  }
+
+  if (msg.type === 'polydub-read-error') {
+    sendResponse({ ok: true, data: { error: typeof msg.error === 'string' ? msg.error : 'Read aloud failed' } });
     return true;
   }
 

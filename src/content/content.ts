@@ -65,13 +65,12 @@ async function translatePage(): Promise<{ count: number }> {
     else uncached.push({ ref, index: i });
   });
 
-  const newOriginals: TextNodeRef[] = [];
   let appliedCount = 0;
 
   const applyBatch = (batchRefs: TextNodeRef[], batchTexts: string[], entries: Record<string, string>): void => {
     if (batchRefs.length === 0) return;
     appliedCount += applyTranslations(batchRefs, batchTexts);
-    newOriginals.push(...batchRefs);
+    state = { originals: [...(state?.originals ?? []), ...batchRefs] };
     void cacheTranslations(entries).catch(() => {});
   };
 
@@ -104,13 +103,18 @@ async function translatePage(): Promise<{ count: number }> {
         }
         applyBatch(batchRefs, batchTexts, entries);
       });
+    } catch (err) {
+      if (state?.originals.length) {
+        restoreText(state.originals);
+        state = null;
+      }
+      throw err;
     } finally {
       busy = false;
       hideToast();
     }
   }
 
-  state = { originals: [...(state?.originals ?? []), ...newOriginals] };
   return { count: appliedCount };
 }
 

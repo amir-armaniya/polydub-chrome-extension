@@ -1,6 +1,6 @@
 import { validateApiKey } from '../../lib/gemini';
 import { getApiKey } from '../../lib/storage';
-import { pcmBase64ToWavDataUrl, synthesizeSpeech } from '../../lib/tts';
+import { pcmBase64ToWavDataUrl, splitIntoSentences, synthesizeSpeech } from '../../lib/tts';
 
 const TTS_VOICE = 'Kore';
 
@@ -21,18 +21,32 @@ async function ensureOffscreen(): Promise<void> {
   });
 }
 
+const MAX_CONSECUTIVE_ERRORS = 5;
+
 async function readAloud(text: string): Promise<{ ok: boolean; error?: string }> {
-  if (!text.trim()) return { ok: false, error: 'Nothing selected to read' };
+  const sentences = splitIntoSentences(text);
+  if (sentences.length === 0) return { ok: false, error: 'Nothing selected to read' };
   const apiKey = await getApiKey();
   if (!apiKey) return { ok: false, error: 'Add your API key in Settings first.' };
-  const audio = await synthesizeSpeech(apiKey, text, TTS_VOICE);
-  const dataUrl = pcmBase64ToWavDataUrl(audio.base64, audio.sampleRate);
   await ensureOffscreen();
-  const res = (await chrome.runtime.sendMessage({ type: 'polydub-play-audio', dataUrl })) as {
-    ok?: boolean;
-    error?: string;
-  };
-  if (!res?.ok) return { ok: false, error: res?.error ?? 'Playback failed' };
+  let consecutiveErrors = 0;
+  for (const sentence of sentences) {
+    try {
+      const audio = await synthesizeSpeech(apiKey, sentence, TTS_VOICE);
+      const dataUrl = pcmBase64ToWavDataUrl(audio.base64, audio.sampleRate);
+      const res = (await chrome.runtime.sendMessage({ type: 'polydub-play-audio', dataUrl })) as {
+        ok?: boolean;
+        error?: string;
+      };
+      if (!res?.ok) throw new Error(res?.error ?? 'Playback queue failed');
+      consecutiveErrors = 0;
+    } catch (err) {
+      consecutiveErrors += 1;
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        return { ok: false, error: 'TTS failed — check your key and proxy.' };
+      }
+    }
+  }
   return { ok: true };
 }
 

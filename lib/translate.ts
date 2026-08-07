@@ -15,6 +15,8 @@ export interface TranslationOutput {
   text: string;
 }
 
+export type TranslateProgress = (done: number, total: number, batch: TranslationOutput[]) => void;
+
 function chunkInputs(inputs: TranslationInput[]): TranslationInput[][] {
   const batches: TranslationInput[][] = [];
   let current: TranslationInput[] = [];
@@ -83,18 +85,25 @@ export async function translateItems(
   apiKey: string,
   inputs: TranslationInput[],
   targetLang: string,
+  onProgress?: TranslateProgress,
 ): Promise<TranslationOutput[]> {
   const out = new Map<number, string>();
+  let done = 0;
   for (const batch of chunkInputs(inputs)) {
     const translated = await translateBatch(
       apiKey,
       batch.map((b) => b.text),
       targetLang,
     );
+    const batchOutputs: TranslationOutput[] = [];
     batch.forEach((item, i) => {
       const t = translated[i];
-      out.set(item.id, t !== undefined && t.trim().length > 0 ? t : item.text);
+      const text = t !== undefined && t.trim().length > 0 ? t : item.text;
+      out.set(item.id, text);
+      batchOutputs.push({ id: item.id, text });
     });
+    done += batch.length;
+    onProgress?.(done, inputs.length, batchOutputs);
   }
   return inputs.map((i) => ({ id: i.id, text: out.get(i.id) ?? i.text }));
 }

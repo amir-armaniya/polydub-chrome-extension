@@ -16,6 +16,36 @@ interface TranslatedState {
 }
 
 let state: TranslatedState | null = null;
+let busy = false;
+let toast: HTMLDivElement | null = null;
+
+function showToast(): void {
+  if (toast) return;
+  toast = document.createElement('div');
+  toast.id = 'polydub-toast';
+  toast.textContent = 'در حال ترجمه…';
+  toast.setAttribute('dir', 'rtl');
+  Object.assign(toast.style, {
+    position: 'fixed',
+    top: '16px',
+    right: '16px',
+    zIndex: '2147483647',
+    background: 'rgba(30, 30, 30, 0.92)',
+    color: '#fff',
+    padding: '8px 14px',
+    borderRadius: '999px',
+    fontSize: '13px',
+    fontFamily: 'system-ui, sans-serif',
+    pointerEvents: 'none',
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)',
+  });
+  document.documentElement.appendChild(toast);
+}
+
+function hideToast(): void {
+  toast?.remove();
+  toast = null;
+}
 
 async function translatePage(): Promise<{ count: number }> {
   const apiKey = await getApiKey();
@@ -31,31 +61,57 @@ async function translatePage(): Promise<{ count: number }> {
   refs.forEach((ref, i) => {
     const key = ref.text.trim();
     const hit = cache[key];
-    if (hit) {
-      translations[i] = hit;
-    } else {
-      uncached.push({ ref, index: i });
-    }
+    if (hit) translations[i] = hit;
+    else uncached.push({ ref, index: i });
   });
 
+  const newOriginals: TextNodeRef[] = [];
+  let appliedCount = 0;
+
+  const applyBatch = (batchRefs: TextNodeRef[], batchTexts: string[], entries: Record<string, string>): void => {
+    if (batchRefs.length === 0) return;
+    appliedCount += applyTranslations(batchRefs, batchTexts);
+    newOriginals.push(...batchRefs);
+    void cacheTranslations(entries).catch(() => {});
+  };
+
+  const cachedRefs: TextNodeRef[] = [];
+  const cachedTexts: string[] = [];
+  refs.forEach((ref, i) => {
+    if (translations[i]) {
+      cachedRefs.push(ref);
+      cachedTexts.push(translations[i]);
+    }
+  });
+  applyBatch(cachedRefs, cachedTexts, {});
+
   if (uncached.length > 0) {
-    const inputs = uncached.map((u, idx) => ({ id: idx, text: u.ref.text.trim() }));
-    const outputs = await translateItems(apiKey, inputs, 'fa');
-    const entries: Record<string, string> = {};
-    outputs.forEach((out) => {
-      const original = inputs[out.id]?.text ?? '';
-      if (original && out.text !== original) entries[original] = out.text;
-    });
-    if (Object.keys(entries).length > 0) await cacheTranslations(entries);
-    outputs.forEach((out) => {
-      const slot = uncached[out.id];
-      if (slot) translations[slot.index] = out.text;
-    });
+    busy = true;
+    showToast();
+    try {
+      const inputs = uncached.map((u, idx) => ({ id: idx, text: u.ref.text.trim() }));
+      await translateItems(apiKey, inputs, 'fa', (_done, _total, batch) => {
+        const batchRefs: TextNodeRef[] = [];
+        const batchTexts: string[] = [];
+        const entries: Record<string, string> = {};
+        for (const out of batch) {
+          const slot = uncached[out.id];
+          if (!slot) continue;
+          const original = slot.ref.text.trim();
+          batchRefs.push(slot.ref);
+          batchTexts.push(out.text);
+          if (original && out.text !== original) entries[original] = out.text;
+        }
+        applyBatch(batchRefs, batchTexts, entries);
+      });
+    } finally {
+      busy = false;
+      hideToast();
+    }
   }
 
-  const count = applyTranslations(refs, translations);
-  state = { originals: refs.map((r) => ({ node: r.node, text: r.text })) };
-  return { count };
+  state = { originals: [...(state?.originals ?? []), ...newOriginals] };
+  return { count: appliedCount };
 }
 
 async function revertPage(): Promise<{ count: number }> {
@@ -86,7 +142,7 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   }
 
   if (msg.type === 'polydub-get-state') {
-    sendResponse({ ok: true, data: { translated: state !== null } });
+    sendResponse({ ok: true, data: { translated: state !== null, busy } });
     return true;
   }
 

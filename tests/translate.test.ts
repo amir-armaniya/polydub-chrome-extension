@@ -134,4 +134,32 @@ describe('translateItems', () => {
 
     await expect(translateItems('key', [{ id: 0, text: 'Hi' }], 'fa')).rejects.toThrow(/rate limited/);
   });
+
+  it('reports progress once per batch with cumulative counts and batch outputs', async () => {
+    const calls: Array<{ done: number; total: number; batch: number[] }> = [];
+    mockFetch((_url, init) => {
+      const texts = readPromptTexts(init);
+      return okResponse(JSON.stringify(texts.map((t) => `T:${t}`)));
+    });
+
+    const inputs = Array.from({ length: TRANSLATE_BATCH.maxItems * 2 + 5 }, (_, i) => ({ id: i, text: `item ${i}` }));
+    const out = await translateItems('key', inputs, 'fa', (done, total, batch) => {
+      calls.push({ done, total, batch: batch.map((b) => b.id) });
+    });
+
+    expect(calls.map((c) => [c.done, c.total])).toEqual([
+      [TRANSLATE_BATCH.maxItems, inputs.length],
+      [TRANSLATE_BATCH.maxItems * 2, inputs.length],
+      [inputs.length, inputs.length],
+    ]);
+    expect(calls[0].batch).toEqual(Array.from({ length: TRANSLATE_BATCH.maxItems }, (_, i) => i));
+    expect(calls[calls.length - 1].batch).toEqual([
+      TRANSLATE_BATCH.maxItems * 2,
+      TRANSLATE_BATCH.maxItems * 2 + 1,
+      TRANSLATE_BATCH.maxItems * 2 + 2,
+      TRANSLATE_BATCH.maxItems * 2 + 3,
+      TRANSLATE_BATCH.maxItems * 2 + 4,
+    ]);
+    expect(out).toHaveLength(inputs.length);
+  });
 });

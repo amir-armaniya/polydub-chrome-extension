@@ -131,6 +131,9 @@ translatePageBtn.addEventListener('click', async () => {
     })) as { ok: boolean; data?: { translated?: boolean }; error?: string };
     const isTranslated = stateRes?.data?.translated === true;
 
+    translatePageBtn.disabled = true;
+    setStatus(translateStatus, isTranslated ? 'Reverting…' : 'Translating…', 'info');
+
     const res = (await chrome.tabs.sendMessage(tab.id, {
       type: isTranslated ? 'polydub-revert-page' : 'polydub-translate-page',
     })) as { ok: boolean; data?: { count?: number }; error?: string };
@@ -138,12 +141,14 @@ translatePageBtn.addEventListener('click', async () => {
     if (!res?.ok) throw new Error(res?.error ?? 'Failed');
     const count = res.data?.count ?? 0;
     setTranslateButton(!isTranslated);
+    translatePageBtn.disabled = false;
     setStatus(
       translateStatus,
       isTranslated ? `Restored ${count} elements.` : `Translated ${count} elements.`,
       'ok',
     );
   } catch (err) {
+    translatePageBtn.disabled = false;
     setStatus(translateStatus, err instanceof Error ? err.message : 'Translation failed.', 'error');
   }
 });
@@ -257,8 +262,14 @@ dubToggleBtn.addEventListener('click', () => {
     if (!(await ensureContent(tab.id))) return;
     const res = (await chrome.tabs.sendMessage(tab.id, {
       type: 'polydub-get-state',
-    })) as { ok?: boolean; data?: { translated?: boolean } };
-    if (res?.ok && res.data) setTranslateButton(res.data.translated === true);
+    })) as { ok?: boolean; data?: { translated?: boolean; busy?: boolean } };
+    if (res?.ok && res.data) {
+      setTranslateButton(res.data.translated === true);
+      if (res.data.busy) {
+        translatePageBtn.disabled = true;
+        setStatus(translateStatus, 'Translating…', 'info');
+      }
+    }
   } catch {
     // page not ready or not injectable — leave default label
   }

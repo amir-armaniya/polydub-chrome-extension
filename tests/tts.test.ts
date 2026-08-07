@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { GeminiError } from '../lib/gemini';
-import { pcmBase64ToWavDataUrl, synthesizeSpeech } from '../lib/tts';
+import { pcmBase64ToWavDataUrl, splitIntoSentences, synthesizeSpeech } from '../lib/tts';
 
 function mockFetchOnce(status: number, body: unknown) {
   vi.stubGlobal(
@@ -123,5 +123,40 @@ describe('pcmBase64ToWavDataUrl', () => {
     for (let i = 0; i < pcm.length; i += 997) {
       expect(bytes[44 + i]).toBe(pcm[i]);
     }
+  });
+});
+
+describe('splitIntoSentences', () => {
+  it('splits English text on sentence-ending punctuation', () => {
+    expect(splitIntoSentences('Hello world. This is a test! Really?')).toEqual([
+      'Hello world.',
+      'This is a test!',
+      'Really?',
+    ]);
+  });
+
+  it('splits Persian text on Persian punctuation', () => {
+    expect(splitIntoSentences('سلام دنیا. این یک تست است! واقعا؟')).toEqual([
+      'سلام دنیا.',
+      'این یک تست است!',
+      'واقعا؟',
+    ]);
+  });
+
+  it('keeps consecutive delimiters with their sentence', () => {
+    expect(splitIntoSentences('Wow!! Really??')).toEqual(['Wow!!', 'Really??']);
+  });
+
+  it('splits on newlines', () => {
+    expect(splitIntoSentences('خط اول.\nخط دوم.')).toEqual(['خط اول.', 'خط دوم.']);
+  });
+
+  it('returns an empty array for empty or whitespace-only text', () => {
+    expect(splitIntoSentences('')).toEqual([]);
+    expect(splitIntoSentences('   \n  ')).toEqual([]);
+  });
+
+  it('keeps trailing text without punctuation as a final sentence', () => {
+    expect(splitIntoSentences('یک جمله. جمله ناتمام')).toEqual(['یک جمله.', 'جمله ناتمام']);
   });
 });

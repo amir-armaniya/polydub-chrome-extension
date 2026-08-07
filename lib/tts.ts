@@ -82,3 +82,25 @@ export function pcmBase64ToWavDataUrl(pcmBase64: string, sampleRate = 24000): st
   const base64 = btoa(ascii);
   return `data:audio/wav;base64,${base64}`;
 }
+
+const SENTENCE_END = /[.!?؛؟\n]/;
+
+export function splitIntoSentences(text: string): string[] {
+  const sentences: string[] = [];
+  let current = '';
+  let i = 0;
+  while (i < text.length) {
+    current += text[i];
+    if (SENTENCE_END.test(text[i])) {
+      while (i + 1 < text.length && SENTENCE_END.test(text[i + 1])) {
+        current += text[i + 1];
+        i += 1;
+      }
+      if (current.trim()) sentences.push(current.trim());
+      current = '';
+    }
+    i += 1;
+  }
+  if (current.trim()) sentences.push(current.trim());
+  return sentences;
+}

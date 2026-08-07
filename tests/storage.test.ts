@@ -1,7 +1,6 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import {
   DEFAULT_SETTINGS,
-  STORAGE_KEYS,
   cacheTranslations,
   getSettings,
   getTranslationCache,

@@ -1,7 +1,7 @@
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 export const GEMINI_MODELS = {
-  text: 'gemini-2.5-flash',
+  text: 'gemini-3.1-flash-lite',
   tts: 'gemini-3.1-flash-tts-preview',
   live: 'gemini-3.5-live-translate-preview',
 } as const;

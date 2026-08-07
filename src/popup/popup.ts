@@ -29,6 +29,16 @@ const dubStatus = $<HTMLParagraphElement>('dub-status');
 
 const tabs = ['translate', 'read', 'live', 'settings'] as const;
 
+async function ensureContent(tabId: number): Promise<boolean> {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'polydub-get-state' });
+    return true;
+  } catch {
+    const res = await chrome.runtime.sendMessage({ type: 'polydub-inject-content', tabId });
+    return res?.ok === true;
+  }
+}
+
 function switchTab(name: (typeof tabs)[number]): void {
   for (const btn of tabButtons) {
     btn.setAttribute('aria-selected', String(btn.dataset.tab === name));
@@ -98,19 +108,38 @@ testKeyBtn.addEventListener('click', async () => {
   }
 });
 
+function setTranslateButton(translated: boolean): void {
+  translatePageBtn.textContent = translated ? 'Revert Page' : 'Translate Page';
+}
+
 translatePageBtn.addEventListener('click', async () => {
   if (!(await hasApiKey())) {
     setStatus(translateStatus, 'Add your API key in Settings first.', 'error');
     switchTab('settings');
     return;
   }
-  setStatus(translateStatus, 'Translating page… (Phase 1)');
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error('No active tab');
-    const res = await chrome.tabs.sendMessage(tab.id, { type: 'polydub-translate-page' });
-    if (!res?.ok) throw new Error(res?.error ?? 'Failed to translate page');
-    setStatus(translateStatus, res.data?.count != null ? `Translated ${res.data.count} elements.` : 'Done.', 'ok');
+    if (!(await ensureContent(tab.id))) throw new Error('Cannot reach page (try a normal web page)');
+
+    const stateRes = (await chrome.tabs.sendMessage(tab.id, {
+      type: 'polydub-get-state',
+    })) as { ok: boolean; data?: { translated?: boolean }; error?: string };
+    const isTranslated = stateRes?.data?.translated === true;
+
+    const res = (await chrome.tabs.sendMessage(tab.id, {
+      type: isTranslated ? 'polydub-revert-page' : 'polydub-translate-page',
+    })) as { ok: boolean; data?: { count?: number }; error?: string };
+
+    if (!res?.ok) throw new Error(res?.error ?? 'Failed');
+    const count = res.data?.count ?? 0;
+    setTranslateButton(!isTranslated);
+    setStatus(
+      translateStatus,
+      isTranslated ? `Restored ${count} elements.` : `Translated ${count} elements.`,
+      'ok',
+    );
   } catch (err) {
     setStatus(translateStatus, err instanceof Error ? err.message : 'Translation failed.', 'error');
   }
@@ -126,4 +155,15 @@ dubToggleBtn.addEventListener('click', () => {
 
 (async () => {
   await refreshKeyState();
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) return;
+    if (!(await ensureContent(tab.id))) return;
+    const res = (await chrome.tabs.sendMessage(tab.id, {
+      type: 'polydub-get-state',
+    })) as { ok?: boolean; data?: { translated?: boolean } };
+    if (res?.ok && res.data) setTranslateButton(res.data.translated === true);
+  } catch {
+    // page not ready or not injectable — leave default label
+  }
 })();

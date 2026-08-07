@@ -16,6 +16,7 @@ export default defineConfig({
     outDir: OUT,
     emptyOutDir: false,
     sourcemap: false,
+    modulePreload: { polyfill: false },
     rollupOptions: {
       input: {
         popup: resolve(VITE_ROOT, 'popup/popup.html'),

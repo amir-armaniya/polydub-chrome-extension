@@ -3,7 +3,7 @@
   "name": "PolyDub",
   "version": "0.1.0",
   "description": "Translate and dub web pages, videos, and podcasts live using Google AI",
-  "permissions": ["storage", "activeTab", "scripting", "offscreen"],
+  "permissions": ["storage", "activeTab", "scripting", "offscreen", "contextMenus"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "host_permissions": ["https://generativelanguage.googleapis.com/*"],
   "background": {

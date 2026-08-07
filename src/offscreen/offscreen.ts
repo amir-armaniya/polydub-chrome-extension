@@ -1,71 +1,107 @@
 export {};
 
+import { PlayQueue } from '../../lib/play-queue';
+
 export interface AudioState {
   state: 'idle' | 'playing' | 'paused';
   position?: number;
   duration?: number;
+  index?: number;
+  total?: number;
   error?: string;
 }
 
+const queue = new PlayQueue();
 let audio: HTMLAudioElement | null = null;
-let currentDataUrl: string | null = null;
-let currentState: AudioState = { state: 'idle' };
+let lastError: string | undefined;
 
-function report(state: AudioState): void {
-  currentState = state;
-  void chrome.runtime.sendMessage({ type: 'polydub-audio-state-update', data: state }).catch(() => {});
+function snapshotState(): AudioState {
+  const s = queue.snapshot;
+  return {
+    state: s.state,
+    index: s.index >= 0 ? s.index : undefined,
+    total: s.total > 0 ? s.total : undefined,
+    position: audio?.currentTime,
+    duration: audio?.duration,
+    error: lastError,
+  };
 }
 
-function playDataUrl(dataUrl: string): void {
-  if (!audio) {
-    audio = new Audio();
-    audio.addEventListener('play', () =>
-      report({ state: 'playing', position: audio?.currentTime, duration: audio?.duration }),
-    );
-    audio.addEventListener('pause', () => {
-      if (audio && !audio.ended && audio.currentTime > 0 && audio.src) {
-        report({ state: 'paused', position: audio.currentTime, duration: audio.duration });
-      }
-    });
-    audio.addEventListener('ended', () => {
-      audio?.remove();
-      audio = null;
-      currentDataUrl = null;
-      report({ state: 'idle' });
-    });
-    audio.addEventListener('error', () => report({ state: 'idle', error: 'Audio playback failed' }));
+function report(): void {
+  void chrome.runtime.sendMessage({ type: 'polydub-audio-state-update', data: snapshotState() }).catch(() => {});
+}
+
+function ensureAudio(): HTMLAudioElement {
+  if (audio) return audio;
+  audio = new Audio();
+  audio.addEventListener('ended', () => {
+    queue.onEnded();
+    const next = queue.currentClip;
+    if (audio && next) {
+      audio.src = next;
+      void audio.play().catch(() => {});
+    }
+    report();
+  });
+  audio.addEventListener('pause', () => {
+    if (queue.snapshot.state === 'playing') queue.pause();
+    report();
+  });
+  audio.addEventListener('error', () => {
+    lastError = 'Audio playback failed';
+    report();
+  });
+  return audio;
+}
+
+function play(): void {
+  const el = ensureAudio();
+  queue.play();
+  const clip = queue.currentClip;
+  if (!clip) return;
+  if (el.src !== clip) {
+    el.src = clip;
+    lastError = undefined;
   }
-  if (dataUrl === currentDataUrl) {
-    if (audio.paused) void audio.play();
-    return;
+  void el.play().catch(() => {});
+}
+
+function pause(): void {
+  queue.pause();
+  audio?.pause();
+}
+
+function stop(): void {
+  queue.stop();
+  audio?.pause();
+}
+
+function clearQueue(): void {
+  queue.clear();
+  if (audio) {
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
   }
-  audio.src = dataUrl;
-  currentDataUrl = dataUrl;
-  void audio.play();
+  lastError = undefined;
 }
 
 function handleCommand(command: string): AudioState {
   switch (command) {
     case 'play':
-      if (audio && currentDataUrl) void audio.play();
+      play();
       break;
     case 'pause':
-      audio?.pause();
+      pause();
       break;
-    case 'stop': {
-      if (audio) {
-        audio.pause();
-        audio.currentTime = 0;
-        audio.src = '';
-        audio.remove();
-      }
-      audio = null;
-      currentDataUrl = null;
-      report({ state: 'idle' });
+    case 'stop':
+      stop();
       break;
-    }
+    case 'clear-queue':
+      clearQueue();
+      break;
   }
-  return { ...currentState, position: audio?.currentTime };
+  return snapshotState();
 }
 
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
@@ -83,8 +119,9 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
       sendResponse({ ok: false, error: 'No audio data' });
       return true;
     }
-    playDataUrl(dataUrl);
-    sendResponse({ ok: true, data: currentState });
+    queue.enqueue(dataUrl);
+    play();
+    sendResponse({ ok: true, data: snapshotState() });
     return true;
   }
 
@@ -95,7 +132,7 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   }
 
   if (msg.type === 'polydub-audio-state-get') {
-    sendResponse({ ok: true, data: { ...currentState, position: audio?.currentTime } });
+    sendResponse({ ok: true, data: snapshotState() });
     return true;
   }
 

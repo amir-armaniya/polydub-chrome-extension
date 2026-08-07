@@ -24,6 +24,7 @@ const translatePageBtn = $<HTMLButtonElement>('translate-page');
 const readSelectionBtn = $<HTMLButtonElement>('read-selection');
 const audioPlayBtn = $<HTMLButtonElement>('audio-play');
 const audioStopBtn = $<HTMLButtonElement>('audio-stop');
+const audioClearBtn = $<HTMLButtonElement>('audio-clear');
 const dubToggleBtn = $<HTMLButtonElement>('dub-toggle');
 const translateStatus = $<HTMLParagraphElement>('translate-status');
 const readStatus = $<HTMLParagraphElement>('read-status');
@@ -151,6 +152,8 @@ interface AudioState {
   state: 'idle' | 'playing' | 'paused';
   position?: number;
   duration?: number;
+  index?: number;
+  total?: number;
   error?: string;
 }
 
@@ -164,13 +167,16 @@ function applyAudioState(state: AudioState): void {
   audioPlayBtn.disabled = !active && !playbackActive;
   audioPlayBtn.textContent = playing ? 'Pause' : active ? 'Resume' : 'Play / Pause';
   audioStopBtn.disabled = !active && !playbackActive;
+  audioClearBtn.disabled = !active && !playbackActive;
   if (state.error) {
     setStatus(readStatus, state.error, 'error');
     playbackActive = false;
     audioPlayBtn.disabled = true;
     audioStopBtn.disabled = true;
+    audioClearBtn.disabled = true;
   } else if (state.state === 'playing') {
-    setStatus(readStatus, 'Playing…', 'info');
+    const pos = state.total && state.total > 1 ? ` ${(state.index ?? 0) + 1}/${state.total}` : '';
+    setStatus(readStatus, `Playing…${pos}`, 'info');
   } else if (state.state === 'paused') {
     setStatus(readStatus, 'Paused.', 'info');
   } else if (playbackActive) {
@@ -226,6 +232,10 @@ audioPlayBtn.addEventListener('click', () => {
 
 audioStopBtn.addEventListener('click', () => {
   void chrome.runtime.sendMessage({ type: 'polydub-audio-command', command: 'stop' });
+});
+
+audioClearBtn.addEventListener('click', () => {
+  void chrome.runtime.sendMessage({ type: 'polydub-audio-command', command: 'clear-queue' });
 });
 
 dubToggleBtn.addEventListener('click', () => {

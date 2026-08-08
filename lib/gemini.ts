@@ -62,11 +62,13 @@ export async function fetchWithRetry(
     const res = await request(path, apiKey, init);
     if (res.ok || res.status < 500) return res;
     if (attempt < maxRetries) {
+      console.warn('[polydub] fetchWithRetry', path, 'attempt', attempt, 'status', res.status);
       await sleep(delay);
       delay *= 2;
     }
   }
   const res = await request(path, apiKey, init);
+  console.warn('[polydub] fetchWithRetry', path, 'final failure, status', res.status);
   const msg = await parseError(res);
   throw new GeminiError(msg, res.status);
 }
@@ -90,6 +92,7 @@ export async function generateContent(
   parts: GenerateContentPart[],
   generationConfig?: Record<string, unknown>,
 ): Promise<GenerateContentResponse> {
+  const start = Date.now();
   const res = await fetchWithRetry(`/models/${model}:generateContent`, apiKey, {
     method: 'POST',
     body: JSON.stringify({
@@ -97,8 +100,12 @@ export async function generateContent(
       generationConfig,
     }),
   });
+  console.info('[polydub] generateContent', model, 'status', res.status, 'in', Date.now() - start, 'ms');
   const body = (await res.json()) as GenerateContentResponse;
-  if (body.error?.message) throw new GeminiError(body.error.message, res.status);
+  if (body.error?.message) {
+    console.warn('[polydub] generateContent', model, 'error body:', body.error.message);
+    throw new GeminiError(body.error.message, res.status);
+  }
   if (!res.ok) throw new GeminiError(await parseError(res), res.status);
   return body;
 }

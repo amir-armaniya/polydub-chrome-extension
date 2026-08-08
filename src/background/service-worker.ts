@@ -10,6 +10,11 @@ chrome.runtime.onInstalled.addListener(() => {
     title: 'Read aloud with PolyDub',
     contexts: ['selection'],
   });
+  chrome.contextMenus.create({
+    id: 'polydub-translate-page',
+    title: 'Translate page with PolyDub',
+    contexts: ['page'],
+  });
 });
 
 async function ensureOffscreen(): Promise<void> {
@@ -23,7 +28,7 @@ async function ensureOffscreen(): Promise<void> {
 
 const MAX_CONSECUTIVE_ERRORS = 5;
 
-async function readAloud(text: string): Promise<{ ok: boolean; error?: string }> {
+export async function readAloud(text: string): Promise<{ ok: boolean; error?: string }> {
   const sentences = splitIntoSentences(text);
   if (sentences.length === 0) return { ok: false, error: 'Nothing selected to read' };
   const apiKey = await getApiKey();
@@ -42,6 +47,7 @@ async function readAloud(text: string): Promise<{ ok: boolean; error?: string }>
       consecutiveErrors = 0;
     } catch (err) {
       consecutiveErrors += 1;
+      console.warn('[polydub] readAloud sentence failed:', err instanceof Error ? err.message : err);
       if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
         return { ok: false, error: 'TTS failed — check your key and proxy.' };
       }
@@ -50,16 +56,79 @@ async function readAloud(text: string): Promise<{ ok: boolean; error?: string }>
   return { ok: true };
 }
 
+async function ensureContentScript(tabId: number): Promise<boolean> {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'polydub-get-state' });
+    return true;
+  } catch {
+    // content script not injected yet
+  }
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['content/content.js'] });
+  } catch {
+    return false;
+  }
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'polydub-get-state' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function togglePageTranslation(tabId: number): Promise<void> {
+  if (!(await ensureContentScript(tabId))) return;
+  try {
+    const stateRes = (await chrome.tabs.sendMessage(tabId, { type: 'polydub-get-state' })) as {
+      ok?: boolean;
+      data?: { translated?: boolean; busy?: boolean };
+    };
+    const state = stateRes?.data;
+    if (state?.busy) return;
+    const translated = state?.translated === true;
+    const res = (await chrome.tabs.sendMessage(tabId, {
+      type: translated ? 'polydub-revert-page' : 'polydub-translate-page',
+    })) as { ok?: boolean; data?: { count?: number }; error?: string };
+    if (!res?.ok) throw new Error(res?.error ?? 'Translation failed');
+    const count = res.data?.count ?? 0;
+    void chrome.tabs
+      .sendMessage(tabId, { type: 'polydub-translate-done', translated: !translated, count })
+      .catch(() => {});
+  } catch (err) {
+    const error = err instanceof Error ? err.message : 'Translation failed';
+    void chrome.tabs.sendMessage(tabId, { type: 'polydub-translate-error', error }).catch(() => {});
+  }
+}
+
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === 'polydub-read-selection' && info.selectionText) {
-    void readAloud(info.selectionText).catch((err: unknown) => {
-      const tabId = tab?.id;
-      if (tabId == null) return;
-      void chrome.tabs.sendMessage(tabId, {
-        type: 'polydub-read-error',
-        error: err instanceof Error ? err.message : 'Read aloud failed',
+  const tabId = tab?.id;
+  if (tabId == null) return;
+  if (info.menuItemId === 'polydub-read-selection') {
+    const reportError = (error: string): void => {
+      void chrome.tabs.sendMessage(tabId, { type: 'polydub-read-error', error }).catch(() => {});
+    };
+    const selection = (info.selectionText ?? '').trim();
+    if (!selection) {
+      reportError('Nothing selected to read');
+      return;
+    }
+    void readAloud(selection)
+      .then((res) => {
+        if (!res.ok) reportError(res.error ?? 'Read aloud failed');
+      })
+      .catch((err: unknown) => {
+        reportError(err instanceof Error ? err.message : 'Read aloud failed');
       });
-    });
+    return;
+  }
+  if (info.menuItemId === 'polydub-translate-page') {
+    void chrome.tabs
+      .query({ active: true, currentWindow: true })
+      .then(async ([activeTab]) => {
+        if (activeTab?.id == null) return;
+        await togglePageTranslation(activeTab.id);
+      })
+      .catch(() => {});
   }
 });
 

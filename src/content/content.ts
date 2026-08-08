@@ -18,19 +18,19 @@ interface TranslatedState {
 let state: TranslatedState | null = null;
 let busy = false;
 let toast: HTMLDivElement | null = null;
+let toastTimer: number | undefined;
 
-function showToast(): void {
-  if (toast) return;
+function showToast(text: string, kind: 'info' | 'error' = 'info'): void {
+  hideToast();
   toast = document.createElement('div');
   toast.id = 'polydub-toast';
-  toast.textContent = 'در حال ترجمه…';
   toast.setAttribute('dir', 'rtl');
   Object.assign(toast.style, {
     position: 'fixed',
     top: '16px',
     right: '16px',
     zIndex: '2147483647',
-    background: 'rgba(30, 30, 30, 0.92)',
+    background: kind === 'error' ? 'rgba(178, 34, 34, 0.95)' : 'rgba(30, 30, 30, 0.92)',
     color: '#fff',
     padding: '8px 14px',
     borderRadius: '999px',
@@ -39,10 +39,16 @@ function showToast(): void {
     pointerEvents: 'none',
     boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)',
   });
+  toast.textContent = text;
   document.documentElement.appendChild(toast);
+  if (kind === 'error') {
+    toastTimer = window.setTimeout(hideToast, 6000);
+  }
 }
 
 function hideToast(): void {
+  if (toastTimer !== undefined) window.clearTimeout(toastTimer);
+  toastTimer = undefined;
   toast?.remove();
   toast = null;
 }
@@ -86,7 +92,7 @@ async function translatePage(): Promise<{ count: number }> {
 
   if (uncached.length > 0) {
     busy = true;
-    showToast();
+    showToast('در حال ترجمه…');
     try {
       const inputs = uncached.map((u, idx) => ({ id: idx, text: u.ref.text.trim() }));
       await translateItems(apiKey, inputs, 'fa', (_done, _total, batch) => {
@@ -156,7 +162,22 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   }
 
   if (msg.type === 'polydub-read-error') {
-    sendResponse({ ok: true, data: { error: typeof msg.error === 'string' ? msg.error : 'Read aloud failed' } });
+    showToast(typeof msg.error === 'string' ? msg.error : 'Read aloud failed', 'error');
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.type === 'polydub-translate-error') {
+    showToast(typeof msg.error === 'string' ? msg.error : 'Translation failed', 'error');
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.type === 'polydub-translate-done') {
+    const translated = msg.translated === true;
+    const count = typeof msg.count === 'number' ? msg.count : 0;
+    showToast(translated ? `ترجمه شد (${count} عنصر)` : `بازگردانی شد (${count} عنصر)`, 'info');
+    sendResponse({ ok: true });
     return true;
   }
 
